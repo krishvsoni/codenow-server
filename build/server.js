@@ -11,7 +11,7 @@ const app = (0, express_1.default)();
 const httpServer = (0, http_1.createServer)(app);
 const io = new socket_io_1.Server(httpServer, {
     cors: {
-        origin: "http://localhost:3000", // Replace with your client URL
+        origin: ["http://localhost:3000", "https://codenow.vercel.app"],
         methods: ["GET", "POST"],
     },
 });
@@ -44,5 +44,5 @@ io.on('connection', (socket) => {
 });
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
-    console.log(`Server listening on http://localhost:${PORT}`);
+    console.log(`Server listening on ${PORT}`);
 });
