@@ -16,19 +16,17 @@ const io = new socket_io_1.Server(httpServer, {
     },
 });
 app.use((0, cors_1.default)());
-app.use(express_1.default.json()); // To parse JSON body in requests
-// In-memory store for shared code (replace with database for production)
+app.use(express_1.default.json());
 const codeStore = {};
+const connectionCounts = {};
 app.get('/', (req, res) => {
     res.json({ message: 'CodeNow server is running' });
 });
-// Endpoint to save the code
 app.post('/api/saveCode', (req, res) => {
     const { id, code } = req.body;
-    codeStore[id] = code; // Store code using the unique ID
+    codeStore[id] = code;
     res.status(200).json({ message: 'Code saved successfully' });
 });
-// Endpoint to get the code by ID
 app.get('/api/getCode/:id', (req, res) => {
     const { id } = req.params;
     const code = codeStore[id];
@@ -39,17 +37,32 @@ app.get('/api/getCode/:id', (req, res) => {
         res.status(404).json({ error: 'Code not found' });
     }
 });
-// Socket.io for real-time code updates
-let sharedCode = ''; // Shared code in-memory
+app.get('/api/connectionCount/:room', (req, res) => {
+    const { room } = req.params;
+    const count = connectionCounts[room] || 0;
+    res.status(200).json({ room, connectionCount: count });
+});
+let sharedCode = '';
 io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id}`);
-    socket.emit('message', 'Welcome to the code sharing service!');
-    socket.on('codeChange', ({ newCode, url }) => {
+    socket.emit('message', 'codenow service running');
+    socket.on('joinURL', (room) => {
+        if (room) {
+            socket.join(room);
+            connectionCounts[room] = (connectionCounts[room] || 0) + 1;
+            console.log(`Client ${socket.id} joined room: ${room}`);
+            console.log(`Current connections for ${room}: ${connectionCounts[room]}`);
+            // Notify room members of the updated count
+            io.to(room).emit('updateConnectionCount', connectionCounts[room]);
+        }
+    });
+    socket.on('codeChange', ({ newCode, room, id }) => {
         if (newCode !== undefined) {
-            sharedCode = newCode; // Update shared code
-            console.log(`Code change from URL: ${url || 'Unknown URL'}`);
+            sharedCode = newCode;
+            codeStore[id] = newCode;
+            console.log(`Code change from room: ${room || 'Unknown room'}`);
             console.log(`New Code: ${newCode}`);
-            socket.broadcast.emit('codeUpdate', newCode); // Broadcast the updated code
+            socket.to(room).emit('codeUpdate', newCode);
         }
         else {
             console.error('Received codeChange with undefined newCode');
@@ -57,6 +70,17 @@ io.on('connection', (socket) => {
     });
     socket.on('disconnect', () => {
         console.log(`Client disconnected: ${socket.id}`);
+        // Get all rooms the socket was in
+        const rooms = Array.from(socket.rooms).filter((room) => room !== socket.id);
+        for (const room of rooms) {
+            if (connectionCounts[room]) {
+                connectionCounts[room] = Math.max(0, connectionCounts[room] - 1);
+                console.log(`Client ${socket.id} left room: ${room}`);
+                console.log(`Updated connections for ${room}: ${connectionCounts[room]}`);
+                // Notify room members of the updated count
+                io.to(room).emit('updateConnectionCount', connectionCounts[room]);
+            }
+        }
     });
 });
 const PORT = process.env.PORT || 3001;
