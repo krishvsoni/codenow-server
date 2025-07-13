@@ -1,6 +1,6 @@
 /*
 CodeNow Server - Vercel Compatible Version
-Simplified working version with MongoDB integration
+Based on the working simple version with MongoDB integration
 */
 import express from 'express';
 import { createServer } from 'http';
@@ -11,7 +11,7 @@ import mongoose from 'mongoose';
 
 dotenv.config();
 
-// MongoDB Schema (inline to avoid import issues)
+// MongoDB Schema
 const codeSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   code: { type: String, required: true },
@@ -36,7 +36,7 @@ app.use(express.json());
 
 const codeStore: { [key: string]: string } = {};
 
-// Database connection with graceful failure
+// Database connection with error handling
 let isConnected = false;
 
 const connectDB = async () => {
@@ -82,7 +82,7 @@ app.post('/api/saveCode', async (req, res) => {
   const { id, code } = req.body;
   codeStore[id] = code;
   
-  // Try to save to database
+  // Try to save to database, but don't fail if it doesn't work
   await safeDbOperation(async () => {
     await Code.findOneAndUpdate(
       { id },
@@ -118,6 +118,60 @@ app.get('/api/getCode/:id', async (req, res) => {
   }
 });
 
+// Additional endpoints for the full functionality
+app.get('/api/getAllCodes', async (req, res) => {
+  const codes = await safeDbOperation(async () => {
+    return await Code.find({}).sort({ updatedAt: -1 }).limit(100);
+  });
+  
+  res.status(200).json({ codes: codes || [] });
+});
+
+app.get('/api/getRecentBackups', async (req, res) => {
+  const backups = await safeDbOperation(async () => {
+    return await Code.find({
+      $or: [
+        { url: 'shared-session' },
+        { url: 'disconnect-backup' },
+        { id: { $regex: '^(shared-session|disconnect-backup)' } }
+      ]
+    }).sort({ updatedAt: -1 }).limit(20);
+  });
+  
+  res.status(200).json({ backups: backups || [] });
+});
+
+app.delete('/api/deleteCode/:id', async (req, res) => {
+  const { id } = req.params;
+  delete codeStore[id];
+  
+  await safeDbOperation(async () => {
+    await Code.findOneAndDelete({ id });
+  });
+  
+  res.status(200).json({ message: 'Code deleted successfully' });
+});
+
+app.post('/api/autoSave', async (req, res) => {
+  const { code, type = 'shared-session' } = req.body;
+  
+  if (!code) {
+    return res.status(400).json({ error: 'Code is required' });
+  }
+
+  const defaultId = `${type}-${new Date().toISOString().split('T')[0]}`;
+  
+  await safeDbOperation(async () => {
+    await Code.findOneAndUpdate(
+      { id: defaultId },
+      { id: defaultId, code, url: type, updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+  });
+  
+  res.status(200).json({ message: 'Code auto-saved successfully' });
+});
+
 let sharedCode = '';
 
 io.on('connection', (socket) => {
@@ -133,7 +187,6 @@ io.on('connection', (socket) => {
     if (newCode !== undefined) {
       sharedCode = newCode;
       console.log(`Code change from URL: ${url || 'Unknown URL'}`);
-      console.log(`New Code: ${newCode}`);
       
       // Save to database if available
       if (url) {
@@ -148,8 +201,6 @@ io.on('connection', (socket) => {
       }
       
       socket.broadcast.emit('codeUpdate', newCode);
-    } else {
-      console.error('Received codeChange with undefined newCode');
     }
   });
 

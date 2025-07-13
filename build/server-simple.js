@@ -14,7 +14,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 /*
 CodeNow Server - Vercel Compatible Version
-Simplified working version with MongoDB integration
+Based on the working simple version with MongoDB integration
 */
 const express_1 = __importDefault(require("express"));
 const http_1 = require("http");
@@ -23,7 +23,7 @@ const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const mongoose_1 = __importDefault(require("mongoose"));
 dotenv_1.default.config();
-// MongoDB Schema (inline to avoid import issues)
+// MongoDB Schema
 const codeSchema = new mongoose_1.default.Schema({
     id: { type: String, required: true, unique: true },
     code: { type: String, required: true },
@@ -42,7 +42,7 @@ const io = new socket_io_1.Server(httpServer, {
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
 const codeStore = {};
-// Database connection with graceful failure
+// Database connection with error handling
 let isConnected = false;
 const connectDB = () => __awaiter(void 0, void 0, void 0, function* () {
     if (isConnected)
@@ -84,7 +84,7 @@ app.get('/', (req, res) => {
 app.post('/api/saveCode', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { id, code } = req.body;
     codeStore[id] = code;
-    // Try to save to database
+    // Try to save to database, but don't fail if it doesn't work
     yield safeDbOperation(() => __awaiter(void 0, void 0, void 0, function* () {
         yield Code.findOneAndUpdate({ id }, { id, code, updatedAt: new Date() }, { upsert: true, new: true });
         console.log(`Code saved to MongoDB for ID: ${id}`);
@@ -111,6 +111,44 @@ app.get('/api/getCode/:id', (req, res) => __awaiter(void 0, void 0, void 0, func
         res.status(404).json({ error: 'Code not found' });
     }
 }));
+// Additional endpoints for the full functionality
+app.get('/api/getAllCodes', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const codes = yield safeDbOperation(() => __awaiter(void 0, void 0, void 0, function* () {
+        return yield Code.find({}).sort({ updatedAt: -1 }).limit(100);
+    }));
+    res.status(200).json({ codes: codes || [] });
+}));
+app.get('/api/getRecentBackups', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const backups = yield safeDbOperation(() => __awaiter(void 0, void 0, void 0, function* () {
+        return yield Code.find({
+            $or: [
+                { url: 'shared-session' },
+                { url: 'disconnect-backup' },
+                { id: { $regex: '^(shared-session|disconnect-backup)' } }
+            ]
+        }).sort({ updatedAt: -1 }).limit(20);
+    }));
+    res.status(200).json({ backups: backups || [] });
+}));
+app.delete('/api/deleteCode/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const { id } = req.params;
+    delete codeStore[id];
+    yield safeDbOperation(() => __awaiter(void 0, void 0, void 0, function* () {
+        yield Code.findOneAndDelete({ id });
+    }));
+    res.status(200).json({ message: 'Code deleted successfully' });
+}));
+app.post('/api/autoSave', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const { code, type = 'shared-session' } = req.body;
+    if (!code) {
+        return res.status(400).json({ error: 'Code is required' });
+    }
+    const defaultId = `${type}-${new Date().toISOString().split('T')[0]}`;
+    yield safeDbOperation(() => __awaiter(void 0, void 0, void 0, function* () {
+        yield Code.findOneAndUpdate({ id: defaultId }, { id: defaultId, code, url: type, updatedAt: new Date() }, { upsert: true, new: true });
+    }));
+    res.status(200).json({ message: 'Code auto-saved successfully' });
+}));
 let sharedCode = '';
 io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id}`);
@@ -122,7 +160,6 @@ io.on('connection', (socket) => {
         if (newCode !== undefined) {
             sharedCode = newCode;
             console.log(`Code change from URL: ${url || 'Unknown URL'}`);
-            console.log(`New Code: ${newCode}`);
             // Save to database if available
             if (url) {
                 const id = url.split('/').pop() || url;
@@ -131,9 +168,6 @@ io.on('connection', (socket) => {
                 }));
             }
             socket.broadcast.emit('codeUpdate', newCode);
-        }
-        else {
-            console.error('Received codeChange with undefined newCode');
         }
     }));
     socket.on('disconnect', () => __awaiter(void 0, void 0, void 0, function* () {
