@@ -4,7 +4,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "npx tsc && nodemon build/server.js"
+    "start": "npx tsc && nodemon build/server.js",
+    "build": "npx tsc",
+    "vercel-build": "npx tsc"
   },
   "keywords": [],
   "author": "Krish Soni",
