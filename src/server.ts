@@ -22,11 +22,18 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: ["http://localhost:3000", "https://codenow.vercel.app", "https://codenow.krishsoni.co"],
-    methods: ["GET", "POST"],
-  },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true},
 });
 
-app.use(cors());
+app.use(cors({
+  origin: ["http://localhost:3000", "https://codenow.vercel.app", "https://codenow.krishsoni.co"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
+
 app.use(express.json());
 
 const codeStore: { [key: string]: string } = {};
@@ -124,6 +131,14 @@ app.get('/api/health', async (req: Request, res: Response) => {
     },
     timestamp: new Date().toISOString()
   });
+});
+
+app.options('/api/saveCode', (req: Request, res: Response) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.status(204).send();
 });
 
 app.post('/api/saveCode', async (req: Request, res: Response): Promise<void> => {

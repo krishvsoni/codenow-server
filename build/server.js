@@ -31,10 +31,17 @@ const httpServer = (0, http_1.createServer)(app);
 const io = new socket_io_1.Server(httpServer, {
     cors: {
         origin: ["http://localhost:3000", "https://codenow.vercel.app", "https://codenow.krishsoni.co"],
-        methods: ["GET", "POST"],
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+        credentials: true
     },
 });
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: ["http://localhost:3000", "https://codenow.vercel.app", "https://codenow.krishsoni.co"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
+}));
 app.use(express_1.default.json());
 const codeStore = {};
 let isConnected = false;
@@ -121,6 +128,13 @@ app.get('/api/health', (req, res) => __awaiter(void 0, void 0, void 0, function*
         timestamp: new Date().toISOString()
     });
 }));
+app.options('/api/saveCode', (req, res) => {
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.status(204).send();
+});
 app.post('/api/saveCode', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { id, code } = req.body;
     if (!id || code === undefined) {
