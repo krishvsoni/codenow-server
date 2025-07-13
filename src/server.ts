@@ -1,7 +1,3 @@
-/*
-CodeNow Server - Vercel Compatible Version
-Simplified working version with MongoDB integration
-*/
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -11,7 +7,6 @@ import mongoose from 'mongoose';
 
 dotenv.config();
 
-// MongoDB Schema (inline to avoid import issues)
 const codeSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   code: { type: String, required: true },
@@ -36,7 +31,6 @@ app.use(express.json());
 
 const codeStore: { [key: string]: string } = {};
 
-// Database connection with graceful failure
 let isConnected = false;
 
 const connectDB = async () => {
@@ -63,7 +57,6 @@ const connectDB = async () => {
   }
 };
 
-// Helper function to safely use database
 const safeDbOperation = async (operation: () => Promise<any>) => {
   if (!isConnected) return null;
   try {
@@ -82,7 +75,6 @@ app.post('/api/saveCode', async (req, res) => {
   const { id, code } = req.body;
   codeStore[id] = code;
   
-  // Try to save to database
   await safeDbOperation(async () => {
     await Code.findOneAndUpdate(
       { id },
@@ -99,7 +91,6 @@ app.get('/api/getCode/:id', async (req, res) => {
   const { id } = req.params;
   let code = codeStore[id];
   
-  // If not in memory, try database
   if (!code) {
     const codeDoc = await safeDbOperation(async () => {
       return await Code.findOne({ id });
@@ -135,7 +126,6 @@ io.on('connection', (socket) => {
       console.log(`Code change from URL: ${url || 'Unknown URL'}`);
       console.log(`New Code: ${newCode}`);
       
-      // Save to database if available
       if (url) {
         const id = url.split('/').pop() || url;
         await safeDbOperation(async () => {
@@ -171,7 +161,6 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3001;
 
-// Initialize database connection
 connectDB();
 
 httpServer.listen(PORT, () => {
