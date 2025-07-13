@@ -44,9 +44,10 @@ const connectDB = () => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const MONGODB_URI = process.env.MONGODB_URI;
         if (!MONGODB_URI) {
-            console.log('MongoDB URI not found, running without database');
+            console.log('Please set  your environment variables');
             return;
         }
+        console.log('Attempting to connect to codenowDB...');
         yield mongoose_1.default.connect(MONGODB_URI, {
             bufferCommands: false,
             maxPoolSize: 10,
@@ -54,23 +55,25 @@ const connectDB = () => __awaiter(void 0, void 0, void 0, function* () {
             socketTimeoutMS: 45000,
         });
         isConnected = true;
-        console.log('MongoDB connected successfully');
-        // Handle connection events
+        console.log('codenowDB connected successfully');
         mongoose_1.default.connection.on('disconnected', () => {
-            console.log('MongoDB disconnected');
+            console.log('codenowDB disconnected');
             isConnected = false;
         });
         mongoose_1.default.connection.on('error', (err) => {
-            console.error('MongoDB connection error:', err);
+            console.error('codenowDB connection error:', err);
             isConnected = false;
         });
         mongoose_1.default.connection.on('reconnected', () => {
-            console.log('MongoDB reconnected');
+            console.log('codenowDB reconnected');
             isConnected = true;
         });
     }
     catch (error) {
-        console.log('MongoDB connection failed, running without database:', error);
+        console.error('codenowDB connection failed:', error);
+        if (error instanceof Error) {
+            console.error('Error details:', error.message);
+        }
         isConnected = false;
     }
 });
@@ -92,23 +95,65 @@ app.get('/', (req, res) => {
     res.json({
         message: 'CodeNow server is running',
         database: isConnected ? 'connected' : 'disconnected',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        mongodb_uri_set: !!process.env.MONGODB_URI,
+        environment: process.env.NODE_ENV || 'development'
     });
 });
+app.get('/api/health', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const dbTest = yield safeDbOperation(() => __awaiter(void 0, void 0, void 0, function* () {
+        const count = yield Code.countDocuments();
+        return { documentCount: count };
+    }), 'health-check');
+    res.json({
+        status: 'ok',
+        database: {
+            connected: isConnected,
+            uri_configured: !!process.env.MONGODB_URI,
+            test_query_result: dbTest,
+            connection_state: mongoose_1.default.connection.readyState // 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
+        },
+        server: {
+            uptime: process.uptime(),
+            memory: process.memoryUsage(),
+            environment: process.env.NODE_ENV || 'development'
+        },
+        timestamp: new Date().toISOString()
+    });
+}));
 app.post('/api/saveCode', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { id, code } = req.body;
+    if (!id || code === undefined) {
+        res.status(400).json({ error: 'Missing id or code in request body' });
+        return;
+    }
+    console.log(`Saving code for ID: ${id}, Length: ${code.length} characters`);
+    console.log(`Database status: ${isConnected ? 'Connected' : 'Disconnected'}`);
     codeStore[id] = code;
     const result = yield safeDbOperation(() => __awaiter(void 0, void 0, void 0, function* () {
         const updatedDoc = yield Code.findOneAndUpdate({ id }, { id, code, updatedAt: new Date() }, { upsert: true, new: true });
-        console.log(`Code saved to MongoDB for ID: ${id}`);
+        console.log(`Code saved to codenowDB for ID: ${id}`);
         return updatedDoc;
     }), `saveCode-${id}`);
     if (result) {
-        res.status(200).json({ message: 'Code saved successfully' });
+        res.status(200).json({
+            message: 'Code saved successfully',
+            saved_to: 'both_memory_and_database',
+            database_connected: true,
+            id: id,
+            code_length: code.length
+        });
     }
     else {
-        console.error(`Failed to save code to MongoDB for ID: ${id}`);
-        res.status(200).json({ message: 'Code saved to memory (database unavailable)' });
+        console.error(` Failed to save code to codenowDB for ID: ${id}`);
+        res.status(200).json({
+            message: 'Code saved to memory only (database unavailable)',
+            saved_to: 'memory_only',
+            database_connected: false,
+            id: id,
+            code_length: code.length,
+            warning: 'Database connection failed - data will be lost on server restart'
+        });
     }
 }));
 app.get('/api/getCode/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
