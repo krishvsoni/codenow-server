@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
@@ -45,56 +45,87 @@ const connectDB = async () => {
 
     await mongoose.connect(MONGODB_URI, {
       bufferCommands: false,
-      maxPoolSize: 1,
+      maxPoolSize: 10,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
     });
 
     isConnected = true;
-    console.log('MongoDB connected successfully');
+    console.log('codenow connected successfully');
+    
+    mongoose.connection.on('disconnected', () => {
+      console.log('codenow disconnected');
+      isConnected = false;
+    });
+    
+    mongoose.connection.on('error', (err) => {
+      console.error('MongoDB connection error:', err);
+      isConnected = false;
+    });
+    
+    mongoose.connection.on('reconnected', () => {
+      console.log('MongoDB reconnected');
+      isConnected = true;
+    });
+    
   } catch (error) {
     console.log('MongoDB connection failed, running without database:', error);
+    isConnected = false;
   }
 };
 
-const safeDbOperation = async (operation: () => Promise<any>) => {
-  if (!isConnected) return null;
+const safeDbOperation = async (operation: () => Promise<any>, operationName?: string) => {
+  if (!isConnected) {
+    console.log(`Database operation "${operationName || 'unknown'}" skipped - not connected to MongoDB`);
+    return null;
+  }
   try {
-    return await operation();
+    const result = await operation();
+    return result;
   } catch (error) {
-    console.error('Database operation failed:', error);
+    console.error(`Database operation "${operationName || 'unknown'}" failed:`, error);
     return null;
   }
 };
 
-app.get('/', (req, res) => {
-  res.json({ message: 'CodeNow server is running' });
+app.get('/', (req: Request, res: Response) => {
+  res.json({ 
+    message: 'CodeNow server is running',
+    database: isConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  });
 });
 
-app.post('/api/saveCode', async (req, res) => {
+app.post('/api/saveCode', async (req: Request, res: Response) => {
   const { id, code } = req.body;
   codeStore[id] = code;
   
-  await safeDbOperation(async () => {
-    await Code.findOneAndUpdate(
+  const result = await safeDbOperation(async () => {
+    const updatedDoc = await Code.findOneAndUpdate(
       { id },
       { id, code, updatedAt: new Date() },
       { upsert: true, new: true }
     );
     console.log(`Code saved to MongoDB for ID: ${id}`);
-  });
+    return updatedDoc;
+  }, `saveCode-${id}`);
   
-  res.status(200).json({ message: 'Code saved successfully' });
+  if (result) {
+    res.status(200).json({ message: 'Code saved successfully' });
+  } else {
+    console.error(`Failed to save code to MongoDB for ID: ${id}`);
+    res.status(200).json({ message: 'Code saved to memory (database unavailable)' });
+  }
 });
 
-app.get('/api/getCode/:id', async (req, res) => {
+app.get('/api/getCode/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   let code = codeStore[id];
   
   if (!code) {
     const codeDoc = await safeDbOperation(async () => {
       return await Code.findOne({ id });
-    });
+    }, `getCode-${id}`);
     
     if (codeDoc) {
       code = codeDoc.code;
@@ -124,17 +155,23 @@ io.on('connection', (socket) => {
     if (newCode !== undefined) {
       sharedCode = newCode;
       console.log(`Code change from URL: ${url || 'Unknown URL'}`);
-      console.log(`New Code: ${newCode}`);
+      console.log(`New Code: ${newCode.substring(0, 100)}...`); // Log first 100 chars to avoid spam
       
       if (url) {
         const id = url.split('/').pop() || url;
-        await safeDbOperation(async () => {
-          await Code.findOneAndUpdate(
+        const result = await safeDbOperation(async () => {
+          const updatedDoc = await Code.findOneAndUpdate(
             { id },
             { id, code: newCode, url, updatedAt: new Date() },
             { upsert: true, new: true }
           );
-        });
+          console.log(`Code saved to MongoDB for ID: ${id}`);
+          return updatedDoc;
+        }, `codeChange-${id}`);
+        
+        if (!result) {
+          console.error(`Failed to save code to MongoDB for ID: ${id}`);
+        }
       }
       
       socket.broadcast.emit('codeUpdate', newCode);
@@ -148,13 +185,19 @@ io.on('connection', (socket) => {
     
     if (sharedCode) {
       const disconnectId = 'disconnect-backup-' + Date.now();
-      await safeDbOperation(async () => {
-        await Code.findOneAndUpdate(
+      const result = await safeDbOperation(async () => {
+        const backupDoc = await Code.findOneAndUpdate(
           { id: disconnectId },
           { id: disconnectId, code: sharedCode, url: 'disconnect-backup', updatedAt: new Date() },
           { upsert: true, new: true }
         );
-      });
+        console.log(`Disconnect backup saved to MongoDB with ID: ${disconnectId}`);
+        return backupDoc;
+      }, `disconnect-backup-${disconnectId}`);
+      
+      if (!result) {
+        console.error(`Failed to save disconnect backup to MongoDB`);
+      }
     }
   });
 });
